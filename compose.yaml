@@ -1,0 +1,28 @@
+name: teams-mcp
+
+services:
+  teams-mcp:
+    image: ${TEAMS_MCP_IMAGE:-registry.tichymichal.net/mcp-teams:latest}
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${TEAMS_MCP_BIND_ADDRESS:-0.0.0.0}:${TEAMS_MCP_PORT:-5052}:8080"
+    environment:
+      TeamsMcp__TenantId: "${TEAMS_MCP_TENANT_ID:?Set TEAMS_MCP_TENANT_ID}"
+      TeamsMcp__ClientId: "${TEAMS_MCP_CLIENT_ID:?Set TEAMS_MCP_CLIENT_ID}"
+      TeamsMcp__ClientSecret: "${TEAMS_MCP_CLIENT_SECRET:-}"
+      TeamsMcp__AdminPassword: "${TEAMS_MCP_ADMIN_PASSWORD:?Set TEAMS_MCP_ADMIN_PASSWORD}"
+      TeamsMcp__DataPath: /app/data
+    volumes:
+      - teams-data:/app/data
+    networks:
+      - gateway-backend
+
+volumes:
+  teams-data:
+    name: ${TEAMS_MCP_DATA_VOLUME:-mcp-teams-data}
+
+networks:
+  gateway-backend:
+    external: true
+    name: ${CODEX_GATEWAY_BACKEND_NETWORK:-codex-gateway-backend}
