@@ -38,6 +38,7 @@ builder.Services.AddMcpServer()
     .WithTools<ChatTools>()
     .WithTools<ChannelTools>()
     .WithTools<MeetingTools>()
+    .WithTools<TranscriptTools>()
     .WithTools<CallHistoryTools>();
 
 var app = builder.Build();
@@ -114,7 +115,7 @@ static string AdminPage(ConnectionState state)
 """;
     var error = state.Error is null ? "" : $"<div class=\"error\">{HtmlEncoder.Default.Encode(state.Error)}</div>";
     return $$"""
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Teams MCP</title><style>{{Styles}}</style></head><body><main><section class="card wide"><p class="eyebrow">SAMWISE · TEAMS MCP</p><h1>Microsoft account</h1><p>One delegated account supplies Teams chats, channels, and calendar-backed Teams meetings. Call history separately uses this application's client credentials.</p>{{status}}{{error}}{{promptMarkup}}<div class="actions"><form method="post" action="/admin/connect"><button>{{(state.Connected ? "Renew sign-in" : "Connect Microsoft account")}}</button></form>{{(state.Connected ? "<form method=\"post\" action=\"/admin/disconnect\"><button class=\"secondary\">Disconnect</button></form>" : "")}}<form method="post" action="/admin/logout"><button class="quiet">Log out</button></form></div><p class="hint">The Azure app registration must allow public client flows. Grant delegated Teams/calendar permissions and the CallRecords.Read.All application permission described in the repository README.</p></section></main></body></html>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Teams MCP</title><style>{{Styles}}</style></head><body><main><section class="card wide"><p class="eyebrow">SAMWISE · TEAMS MCP</p><h1>Microsoft account</h1><p>One delegated account supplies Teams chats, channels, and calendar-backed Teams meetings. Call history and transcripts separately use this application's client credentials.</p>{{status}}{{error}}{{promptMarkup}}<div class="actions"><form method="post" action="/admin/connect"><button>{{(state.Connected ? "Renew sign-in" : "Connect Microsoft account")}}</button></form>{{(state.Connected ? "<form method=\"post\" action=\"/admin/disconnect\"><button class=\"secondary\">Disconnect</button></form>" : "")}}<form method="post" action="/admin/logout"><button class="quiet">Log out</button></form></div><p class="hint">The Azure app registration must allow public client flows. Grant the delegated and application permissions described in the repository README.</p></section></main></body></html>
 """;
 }
 
