@@ -5,7 +5,7 @@ A small, single-user Streamable HTTP MCP server for Microsoft Teams. It gives Sa
 The service deliberately separates authentication by capability:
 
 - Chat, channel, and meeting tools use a delegated Microsoft account connected with device-code sign-in.
-- Call-history and transcript tools use application credentials because Microsoft Graph exposes these APIs through application permissions.
+- Call-history and transcript discovery use application credentials. Scheduled-meeting transcript downloads first use the connected account's delegated access, which also supports meetings the user joined but did not organize, and then fall back to application access. Ad-hoc call transcripts use application access.
 - Codex Gateway remains the authorization boundary. Only grant mutation tools to Samwise's execution profile.
 
 ## Microsoft Entra application
@@ -16,11 +16,11 @@ Create one app registration in the tenant that owns the Teams account.
 2. Under **Authentication**, enable **Allow public client flows**. This is required for the private device-code login used by the admin page.
 3. Add delegated Microsoft Graph permissions:
    `User.Read`, `Chat.ReadWrite`, `ChatMessage.Send`, `Team.ReadBasic.All`,
-   `Channel.ReadBasic.All`, `ChannelMessage.Read.All`, `ChannelMessage.Send`, and
-   `Calendars.ReadWrite`.
+   `Channel.ReadBasic.All`, `ChannelMessage.Read.All`, `ChannelMessage.Send`,
+   `Calendars.ReadWrite`, and `OnlineMeetingTranscript.Read.All`.
 4. Add the `CallRecords.Read.All`, `OnlineMeetingTranscript.Read.All`, and
    `CallTranscripts.Read.All` **application** permissions and grant admin consent.
-5. Create a client secret if call history or transcript intake is needed. The delegated Teams tools do not use it.
+5. Create a client secret if call history, transcript discovery, or ad-hoc call transcript intake is needed.
 
 The exact permissions available can depend on the Microsoft 365 tenant and its policies. Admin consent may also be required for delegated permissions.
 

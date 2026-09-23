@@ -83,14 +83,13 @@ public sealed class TranscriptTools(GraphClient graph)
             cancellationToken: cancellationToken)
             ?? throw new InvalidOperationException("Microsoft Graph returned no connected user.");
         var userId = RequireNodeString(me, "id");
-        var path = hasMeeting
-            ? $"users/{GraphClient.Id(userId)}/onlineMeetings/{GraphClient.Id(meetingId!)}/transcripts/{GraphClient.Id(transcriptId)}/content"
-            : $"users/{GraphClient.Id(userId)}/adhocCalls/{GraphClient.Id(callId!)}/transcripts/{GraphClient.Id(transcriptId)}/content";
-        var content = await graph.ApplicationTextAsync(
-            HttpMethod.Get,
-            path,
-            "text/vtt",
-            cancellationToken);
+        var content = hasMeeting
+            ? await DownloadMeetingTranscriptAsync(userId, meetingId!, transcriptId, cancellationToken)
+            : await graph.ApplicationTextAsync(
+                HttpMethod.Get,
+                $"users/{GraphClient.Id(userId)}/adhocCalls/{GraphClient.Id(callId!)}/transcripts/{GraphClient.Id(transcriptId)}/content",
+                "text/vtt",
+                cancellationToken);
         return new JsonObject
         {
             ["transcriptId"] = transcriptId.Trim(),
@@ -99,6 +98,41 @@ public sealed class TranscriptTools(GraphClient graph)
             ["format"] = "text/vtt",
             ["content"] = content
         }.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+    }
+
+    private async Task<string> DownloadMeetingTranscriptAsync(
+        string userId,
+        string meetingId,
+        string transcriptId,
+        CancellationToken cancellationToken)
+    {
+        var suffix = $"onlineMeetings/{GraphClient.Id(meetingId)}/transcripts/{GraphClient.Id(transcriptId)}/content";
+        try
+        {
+            return await graph.DelegatedTextAsync(
+                HttpMethod.Get,
+                $"me/{suffix}",
+                "text/vtt",
+                cancellationToken);
+        }
+        catch (InvalidOperationException delegatedFailure)
+        {
+            try
+            {
+                return await graph.ApplicationTextAsync(
+                    HttpMethod.Get,
+                    $"users/{GraphClient.Id(userId)}/{suffix}",
+                    "text/vtt",
+                    cancellationToken);
+            }
+            catch (InvalidOperationException applicationFailure)
+            {
+                throw new InvalidOperationException(
+                    $"The transcript could not be downloaded with delegated or application access. " +
+                    $"Delegated: {delegatedFailure.Message} Application: {applicationFailure.Message}",
+                    applicationFailure);
+            }
+        }
     }
 
     private static void AddTranscripts(

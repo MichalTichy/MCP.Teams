@@ -25,6 +25,13 @@ public sealed class GraphClient(HttpClient httpClient, GraphTokenProvider tokens
         CancellationToken cancellationToken = default) =>
         SendTextAsync(method, path, accept, tokens.GetApplicationTokenAsync, cancellationToken);
 
+    public Task<string> DelegatedTextAsync(
+        HttpMethod method,
+        string path,
+        string accept,
+        CancellationToken cancellationToken = default) =>
+        SendTextAsync(method, path, accept, tokens.GetDelegatedTokenAsync, cancellationToken);
+
     private async Task<JsonNode?> SendAsync(
         HttpMethod method,
         string path,

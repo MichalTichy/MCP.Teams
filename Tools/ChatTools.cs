@@ -1,4 +1,6 @@
 using System.ComponentModel;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using ModelContextProtocol.Server;
 using TeamsMcp.Services;
 
@@ -9,8 +11,20 @@ public sealed class ChatTools(GraphClient graph)
 {
     [McpServerTool(Name = "teams_list_chats"), Description("List chats for the connected Microsoft Teams user, newest first.")]
     public async Task<string> ListChats([Description("Maximum chats to return (1-50).")]
-        int limit = 20) => GraphClient.Print(await graph.DelegatedAsync(HttpMethod.Get,
-        $"me/chats?$top={GraphClient.Top(limit)}&$orderby=lastUpdatedDateTime desc"));
+        int limit = 20)
+    {
+        var response = await graph.DelegatedAsync(HttpMethod.Get, "me/chats?$top=50");
+        var chats = response?["value"] is JsonArray value
+            ? value.OfType<JsonObject>()
+                .OrderByDescending(chat => ParseDate(chat["lastUpdatedDateTime"]))
+                .Take(GraphClient.Top(limit))
+                .Select(chat => chat.DeepClone())
+                .ToArray()
+            : [];
+
+        return new JsonObject { ["value"] = new JsonArray(chats) }
+            .ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+    }
 
     [McpServerTool(Name = "teams_get_chat"), Description("Get one Teams chat by its ID.")]
     public async Task<string> GetChat([Description("Teams chat ID.")] string chatId) =>
@@ -43,4 +57,9 @@ public sealed class ChatTools(GraphClient graph)
             $"chats/{GraphClient.Id(chatId)}/messages",
             new { body = new { contentType = "text", content = message } }));
     }
+
+    private static DateTimeOffset ParseDate(JsonNode? value) =>
+        DateTimeOffset.TryParse(value?.GetValue<string>(), out var parsed)
+            ? parsed
+            : DateTimeOffset.MinValue;
 }

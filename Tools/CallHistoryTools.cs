@@ -1,4 +1,6 @@
 using System.ComponentModel;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using ModelContextProtocol.Server;
 using TeamsMcp.Services;
 
@@ -17,9 +19,20 @@ public sealed class CallHistoryTools(GraphClient graph)
         var filters = new List<string>();
         if (!string.IsNullOrWhiteSpace(fromDateTime)) filters.Add($"startDateTime ge {NormalizeUtc(fromDateTime)}");
         if (!string.IsNullOrWhiteSpace(toDateTime)) filters.Add($"startDateTime lt {NormalizeUtc(toDateTime)}");
-        var query = $"?$top={Math.Clamp(limit, 1, 60)}";
-        if (filters.Count > 0) query += $"&$filter={Uri.EscapeDataString(string.Join(" and ", filters))}";
-        return GraphClient.Print(await graph.ApplicationAsync(HttpMethod.Get, $"communications/callRecords{query}"));
+        var query = filters.Count > 0
+            ? $"?$filter={Uri.EscapeDataString(string.Join(" and ", filters))}"
+            : string.Empty;
+        var response = await graph.ApplicationAsync(HttpMethod.Get, $"communications/callRecords{query}");
+        var records = response?["value"] is JsonArray value
+            ? value.OfType<JsonObject>()
+                .OrderByDescending(record => ParseDate(record["startDateTime"]))
+                .Take(Math.Clamp(limit, 1, 60))
+                .Select(record => record.DeepClone())
+                .ToArray()
+            : [];
+
+        return new JsonObject { ["value"] = new JsonArray(records) }
+            .ToJsonString(new JsonSerializerOptions { WriteIndented = true });
     }
 
     [McpServerTool(Name = "teams_call_history_get_record"), Description("Get one Teams call record by ID.")]
@@ -47,4 +60,9 @@ public sealed class CallHistoryTools(GraphClient graph)
         if (!DateTimeOffset.TryParse(value, out var parsed)) throw new ArgumentException($"Invalid UTC date/time: {value}");
         return parsed.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ");
     }
+
+    private static DateTimeOffset ParseDate(JsonNode? value) =>
+        DateTimeOffset.TryParse(value?.GetValue<string>(), out var parsed)
+            ? parsed
+            : DateTimeOffset.MinValue;
 }
