@@ -14,24 +14,32 @@ public sealed class MeetingTools(GraphClient graph)
         [Description("ISO 8601 local date/time.")] string end,
         [Description("Windows or IANA time-zone name accepted by Microsoft Graph, for example Europe/Prague.")] string timeZone,
         [Description("Required attendee email addresses.")] string[]? attendees = null,
-        [Description("Optional HTML agenda or description.")] string? body = null)
+        [Description("Optional HTML agenda or description.")] string? body = null,
+        [Description("Optional reminder lead time in whole minutes. When supplied, the calendar reminder is enabled.")] int? reminderMinutesBeforeStart = null)
     {
         GraphClient.Require(subject, nameof(subject));
         GraphClient.Require(start, nameof(start));
         GraphClient.Require(end, nameof(end));
         GraphClient.Require(timeZone, nameof(timeZone));
-        var payload = new
+        ValidateReminder(reminderMinutesBeforeStart);
+        var payload = new Dictionary<string, object?>
         {
-            subject,
-            body = new { contentType = "HTML", content = body ?? string.Empty },
-            start = new { dateTime = start, timeZone },
-            end = new { dateTime = end, timeZone },
-            attendees = (attendees ?? []).Where(value => !string.IsNullOrWhiteSpace(value)).Select(address =>
+            ["subject"] = subject,
+            ["body"] = new { contentType = "HTML", content = body ?? string.Empty },
+            ["start"] = new { dateTime = start, timeZone },
+            ["end"] = new { dateTime = end, timeZone },
+            ["attendees"] = (attendees ?? []).Where(value => !string.IsNullOrWhiteSpace(value)).Select(address =>
                 new { emailAddress = new { address = address.Trim() }, type = "required" }).ToArray(),
-            isOnlineMeeting = true,
-            onlineMeetingProvider = "teamsForBusiness",
-            transactionId = Guid.NewGuid().ToString()
+            ["isOnlineMeeting"] = true,
+            ["onlineMeetingProvider"] = "teamsForBusiness",
+            ["transactionId"] = Guid.NewGuid().ToString()
         };
+        if (reminderMinutesBeforeStart is not null)
+        {
+            payload["isReminderOn"] = true;
+            payload["reminderMinutesBeforeStart"] = reminderMinutesBeforeStart.Value;
+        }
+
         return GraphClient.Print(await graph.DelegatedAsync(HttpMethod.Post, "me/events", payload));
     }
 
@@ -47,8 +55,10 @@ public sealed class MeetingTools(GraphClient graph)
         string? end = null,
         string? timeZone = null,
         string[]? attendees = null,
-        string? body = null)
+        string? body = null,
+        [Description("Optional reminder lead time in whole minutes. When supplied, the calendar reminder is enabled.")] int? reminderMinutesBeforeStart = null)
     {
+        ValidateReminder(reminderMinutesBeforeStart);
         var payload = new Dictionary<string, object?>();
         if (!string.IsNullOrWhiteSpace(subject)) payload["subject"] = subject;
         if (body is not null) payload["body"] = new { contentType = "HTML", content = body };
@@ -61,6 +71,11 @@ public sealed class MeetingTools(GraphClient graph)
         if (attendees is not null)
             payload["attendees"] = attendees.Where(value => !string.IsNullOrWhiteSpace(value)).Select(address =>
                 new { emailAddress = new { address = address.Trim() }, type = "required" }).ToArray();
+        if (reminderMinutesBeforeStart is not null)
+        {
+            payload["isReminderOn"] = true;
+            payload["reminderMinutesBeforeStart"] = reminderMinutesBeforeStart.Value;
+        }
         if (payload.Count == 0) throw new ArgumentException("At least one meeting field must be supplied.");
         return GraphClient.Print(await graph.DelegatedAsync(new HttpMethod("PATCH"),
             $"me/events/{GraphClient.Id(eventId)}", payload));
@@ -71,4 +86,14 @@ public sealed class MeetingTools(GraphClient graph)
         [Description("Calendar event ID.")] string eventId,
         [Description("Cancellation note sent to attendees.")] string comment = "") => GraphClient.Print(
         await graph.DelegatedAsync(HttpMethod.Post, $"me/events/{GraphClient.Id(eventId)}/cancel", new { comment }));
+
+    private static void ValidateReminder(int? reminderMinutesBeforeStart)
+    {
+        if (reminderMinutesBeforeStart is < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(reminderMinutesBeforeStart),
+                "Reminder lead time cannot be negative.");
+        }
+    }
 }

@@ -56,7 +56,7 @@ Discover the tools, then grant them by Samwise stage:
   `teams_reply_to_channel_message`, `create_teams_meeting`,
   `update_teams_meeting`, and `cancel_teams_meeting` as needed.
 
-Meeting creation is a calendar operation with `isOnlineMeeting=true`; this produces both a calendar event and a Teams join URL. It is intentionally different from a standalone Graph online meeting, which does not create a calendar event.
+Meeting creation is a calendar operation with `isOnlineMeeting=true`; this produces both a calendar event and a Teams join URL. It accepts an optional `reminderMinutesBeforeStart` value and enables the event reminder when supplied. It is intentionally different from a standalone Graph online meeting, which does not create a calendar event.
 
 ## Tool surface
 
