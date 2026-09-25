@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -10,7 +11,7 @@ namespace TeamsMcp.Tools;
 public sealed class TranscriptTools(GraphClient graph)
 {
     [McpServerTool(Name = "teams_list_recent_transcripts")]
-    [Description("Lists metadata for recent Teams meeting and ad-hoc call transcripts organized by the connected account. It does not download transcript content.")]
+    [Description("Lists metadata for recent Teams meeting and ad-hoc call transcripts accessible to the connected account, including invited calendar meetings. Independent discovery failures are returned without discarding successful results. It does not download transcript content.")]
     public async Task<string> ListRecentTranscriptsAsync(
         [Description("Inclusive UTC ISO 8601 start timestamp.")] string fromDateTime,
         [Description("Exclusive UTC ISO 8601 end timestamp.")] string toDateTime,
@@ -33,6 +34,10 @@ public sealed class TranscriptTools(GraphClient graph)
         var displayName = NodeString(me, "displayName") ?? "Connected Microsoft account";
         var requestedLimit = Math.Clamp(limit, 1, 100);
 
+        var transcripts = new ConcurrentBag<JsonObject>();
+        var errors = new ConcurrentBag<string>();
+        var skippedMeetings = new ConcurrentBag<string>();
+
         var scheduledPath =
             $"users/{GraphClient.Id(userId)}/onlineMeetings/getAllTranscripts(" +
             $"meetingOrganizerUserId='{GraphClient.Id(userId)}'," +
@@ -40,25 +45,32 @@ public sealed class TranscriptTools(GraphClient graph)
             $"endDateTime={Uri.EscapeDataString(to.ToString("O"))})?$top={requestedLimit}";
         var adhocPath =
             $"users/{GraphClient.Id(userId)}/adhocCalls/getAllTranscripts(" +
-            $"userId={GraphClient.Id(userId)}," +
+            $"userId='{GraphClient.Id(userId)}'," +
             $"startDateTime={Uri.EscapeDataString(from.ToString("O"))}," +
             $"endDateTime={Uri.EscapeDataString(to.ToString("O"))})?$top={requestedLimit}";
 
-        var scheduledTask = graph.ApplicationAsync(HttpMethod.Get, scheduledPath, cancellationToken: cancellationToken);
-        var adhocTask = graph.ApplicationAsync(HttpMethod.Get, adhocPath, cancellationToken: cancellationToken);
-        await Task.WhenAll(scheduledTask, adhocTask);
+        await AddApplicationTranscriptsAsync(
+            scheduledPath, "scheduledMeeting", "Organized scheduled meetings",
+            userId, displayName, transcripts, errors, cancellationToken);
+        await AddApplicationTranscriptsAsync(
+            adhocPath, "adhocCall", "Ad-hoc calls",
+            userId, displayName, transcripts, errors, cancellationToken);
+        await AddInvitedMeetingTranscriptsAsync(
+            from, to, requestedLimit, transcripts, errors, skippedMeetings, cancellationToken);
 
-        var value = new JsonArray();
-        AddTranscripts(value, await scheduledTask, "scheduledMeeting", userId, displayName);
-        AddTranscripts(value, await adhocTask, "adhocCall", userId, displayName);
-
-        var ordered = value
-            .OfType<JsonObject>()
+        var ordered = transcripts
+            .GroupBy(TranscriptKey, StringComparer.Ordinal)
+            .Select(group => group.First())
             .OrderByDescending(item => ParseDate(item["createdDateTime"]))
             .Take(requestedLimit)
             .Select(item => item.DeepClone())
             .ToArray();
-        return new JsonObject { ["value"] = new JsonArray(ordered) }
+        return new JsonObject
+        {
+            ["value"] = new JsonArray(ordered),
+            ["errors"] = ToJsonArray(GroupMessages(errors)),
+            ["skippedMeetings"] = ToJsonArray(GroupMessages(skippedMeetings))
+        }
             .ToJsonString(new JsonSerializerOptions { WriteIndented = true });
     }
 
@@ -135,12 +147,116 @@ public sealed class TranscriptTools(GraphClient graph)
         }
     }
 
+    private async Task AddApplicationTranscriptsAsync(
+        string path,
+        string kind,
+        string source,
+        string userId,
+        string displayName,
+        ConcurrentBag<JsonObject> transcripts,
+        ConcurrentBag<string> errors,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            AddTranscripts(
+                transcripts,
+                await graph.ApplicationAsync(HttpMethod.Get, path, cancellationToken: cancellationToken),
+                kind,
+                userId,
+                displayName);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            errors.Add($"{source}: {exception.Message}");
+        }
+    }
+
+    private async Task AddInvitedMeetingTranscriptsAsync(
+        DateTimeOffset from,
+        DateTimeOffset to,
+        int requestedLimit,
+        ConcurrentBag<JsonObject> transcripts,
+        ConcurrentBag<string> errors,
+        ConcurrentBag<string> skippedMeetings,
+        CancellationToken cancellationToken)
+    {
+        JsonNode? calendarResponse;
+        try
+        {
+            var calendarFrom = from.AddDays(-7);
+            var calendarPath = "me/calendarView?startDateTime="
+                + Uri.EscapeDataString(calendarFrom.ToString("O"))
+                + "&endDateTime=" + Uri.EscapeDataString(to.ToString("O"))
+                + "&$select=onlineMeeting,organizer&$top=1000";
+            calendarResponse = await graph.DelegatedAsync(
+                HttpMethod.Get, calendarPath, cancellationToken: cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            errors.Add($"Invited meeting calendar discovery: {exception.Message}");
+            return;
+        }
+
+        var candidates = Values(calendarResponse)
+            .Select(item => new
+            {
+                JoinUrl = NodeString(item["onlineMeeting"], "joinUrl"),
+                OrganizerName = NodeString(item["organizer"]?["emailAddress"], "name")
+                    ?? "Meeting organizer"
+            })
+            .Where(item => !string.IsNullOrWhiteSpace(item.JoinUrl))
+            .DistinctBy(item => item.JoinUrl, StringComparer.Ordinal)
+            .ToArray();
+
+        await Parallel.ForEachAsync(candidates, new ParallelOptions
+        {
+            MaxDegreeOfParallelism = 4,
+            CancellationToken = cancellationToken
+        }, async (candidate, token) =>
+        {
+            try
+            {
+                var escapedJoinUrl = candidate.JoinUrl!.Replace("'", "''", StringComparison.Ordinal);
+                var meetingPath = "me/onlineMeetings?$filter="
+                    + Uri.EscapeDataString($"JoinWebUrl eq '{escapedJoinUrl}'");
+                var meetingResponse = await graph.DelegatedAsync(
+                    HttpMethod.Get, meetingPath, cancellationToken: token);
+                foreach (var meeting in Values(meetingResponse))
+                {
+                    var meetingId = RequireNodeString(meeting, "id");
+                    var organizerId = NodeString(meeting["participants"]?["organizer"]?["identity"]?["user"], "id");
+                    var transcriptResponse = await graph.DelegatedAsync(
+                        HttpMethod.Get,
+                        $"me/onlineMeetings/{GraphClient.Id(meetingId)}/transcripts?$top={requestedLimit}",
+                        cancellationToken: token);
+                    AddTranscripts(
+                        transcripts,
+                        transcriptResponse,
+                        "scheduledMeeting",
+                        organizerId,
+                        candidate.OrganizerName,
+                        meetingId);
+                }
+            }
+            catch (InvalidOperationException exception) when (IsInaccessibleMeeting(exception.Message))
+            {
+                skippedMeetings.Add(exception.Message);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                errors.Add($"Invited meeting: {exception.Message}");
+            }
+        });
+    }
+
     private static void AddTranscripts(
-        JsonArray target,
+        ConcurrentBag<JsonObject> target,
         JsonNode? response,
         string kind,
-        string organizerId,
-        string organizerName)
+        string? organizerId,
+        string organizerName,
+        string? resolvedMeetingId = null)
     {
         if (response?["value"] is not JsonArray items)
         {
@@ -160,7 +276,7 @@ public sealed class TranscriptTools(GraphClient graph)
             {
                 ["id"] = id,
                 ["kind"] = kind,
-                ["meetingId"] = NodeString(item, "meetingId"),
+                ["meetingId"] = resolvedMeetingId ?? NodeString(item, "meetingId"),
                 ["callId"] = NodeString(item, "callId"),
                 ["organizerId"] = organizerId,
                 ["organizerName"] = organizerName,
@@ -170,17 +286,43 @@ public sealed class TranscriptTools(GraphClient graph)
         }
     }
 
+    private static IEnumerable<JsonObject> Values(JsonNode? response) =>
+        response?["value"] is JsonArray items
+            ? items.OfType<JsonObject>()
+            : [];
+
+    private static bool IsInaccessibleMeeting(string message) =>
+        (message.Contains("Microsoft Graph returned 403", StringComparison.Ordinal)
+         && message.Contains("3003:", StringComparison.Ordinal))
+        || (message.Contains("Microsoft Graph returned 404", StringComparison.Ordinal)
+            && message.Contains("3004:", StringComparison.Ordinal));
+
+    private static string TranscriptKey(JsonObject item) => string.Join('|',
+        NodeString(item, "kind") ?? string.Empty,
+        NodeString(item, "meetingId") ?? string.Empty,
+        NodeString(item, "callId") ?? string.Empty,
+        NodeString(item, "id") ?? string.Empty);
+
+    private static IReadOnlyList<string> GroupMessages(IEnumerable<string> messages) => messages
+        .GroupBy(message => message, StringComparer.Ordinal)
+        .Select(group => group.Count() == 1 ? group.Key : $"{group.Count()} occurrences: {group.Key}")
+        .Order(StringComparer.Ordinal)
+        .ToArray();
+
+    private static JsonArray ToJsonArray(IEnumerable<string> values) =>
+        new(values.Select(value => JsonValue.Create(value)).ToArray());
+
     private static DateTimeOffset ParseDate(JsonNode? node) =>
         DateTimeOffset.TryParse(node?.GetValue<string>(), out var parsed)
             ? parsed
             : DateTimeOffset.MinValue;
 
-    private static string RequireNodeString(JsonNode node, string propertyName) =>
+    private static string RequireNodeString(JsonNode? node, string propertyName) =>
         NodeString(node, propertyName)
         ?? throw new InvalidOperationException($"Microsoft Graph response has no '{propertyName}'.");
 
-    private static string? NodeString(JsonNode node, string propertyName) =>
-        node[propertyName]?.GetValue<string>();
+    private static string? NodeString(JsonNode? node, string propertyName) =>
+        node?[propertyName]?.GetValue<string>();
 
     private static DateTimeOffset NormalizeUtc(string value, string parameterName)
     {

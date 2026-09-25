@@ -64,7 +64,9 @@ Meeting creation is a calendar operation with `isOnlineMeeting=true`; this produ
 - Channels: list teams/channels/messages, send a root message, reply in a thread.
 - Meetings: create, get, update, and cancel calendar-backed Teams meetings.
 - Calls: list/get call records, participants, and sessions.
-- Transcripts: list recent transcript metadata without downloading content, and
-  download one selected meeting or ad-hoc call transcript on demand.
+- Transcripts: list recent transcript metadata for organized meetings, invited
+  calendar meetings, and ad-hoc calls without downloading content, then download
+  one selected transcript on demand. Discovery returns successful sources together
+  with per-source errors instead of dropping all results when one Graph API fails.
 
 Message edits/deletes and team membership administration are intentionally omitted from this first version.
