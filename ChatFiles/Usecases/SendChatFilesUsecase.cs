@@ -4,5 +4,6 @@ using TeamsMcp.ChatFiles.Models;
 
 namespace TeamsMcp.ChatFiles.Usecases;
 
-public sealed record SendChatFilesUsecase(string ChatId, string Message, IReadOnlyList<ChatFileReference> Attachments)
+public sealed record SendChatFilesUsecase(string ChatId, string Message, IReadOnlyList<ChatFileReference> Attachments,
+    IReadOnlyList<ChatFileUpload>? Files = null)
     : IRequest<JsonNode?>;

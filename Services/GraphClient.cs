@@ -18,6 +18,16 @@ public sealed class GraphClient(HttpClient httpClient, IGraphTokenProvider token
     public Task<JsonNode?> ApplicationAsync(HttpMethod method, string path, object? body = null, CancellationToken cancellationToken = default) =>
         SendAsync(method, path, body, tokens.GetApplicationTokenAsync, cancellationToken);
 
+    public async Task<JsonNode?> UploadAsync(string path, byte[] bytes, string contentType, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Put, _options.GraphBaseUrl.TrimEnd('/') + "/" + path);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", await tokens.GetDelegatedTokenAsync(cancellationToken));
+        request.Content = new ByteArrayContent(bytes);
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue(contentType);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadJsonAsync(response, cancellationToken);
+    }
+
     public Task<string> ApplicationTextAsync(
         HttpMethod method,
         string path,
@@ -49,11 +59,16 @@ public sealed class GraphClient(HttpClient httpClient, IGraphTokenProvider token
             request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
 
         using var response = await httpClient.SendAsync(request, cancellationToken);
+        return await ReadJsonAsync(response, cancellationToken);
+    }
+
+    private static async Task<JsonNode?> ReadJsonAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
         var text = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
             var safeMessage = TryGetGraphError(text) ?? response.ReasonPhrase ?? "Microsoft Graph request failed";
-            throw new InvalidOperationException($"Microsoft Graph returned {(int)response.StatusCode}: {safeMessage}");
+            throw new GraphRequestException(response.StatusCode, $"Microsoft Graph returned {(int)response.StatusCode}: {safeMessage}");
         }
         return string.IsNullOrWhiteSpace(text) ? null : JsonNode.Parse(text);
     }

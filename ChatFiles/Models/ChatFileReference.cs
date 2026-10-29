@@ -6,7 +6,7 @@ namespace TeamsMcp.ChatFiles.Models;
 public sealed record ChatFileReference
 {
     [JsonPropertyName("id")]
-    [Description("SharePoint file GUID returned by the separate storage tool, from sharepointIds.listItemUniqueId or the driveItem eTag. This is not the opaque driveItem ID.")]
+    [Description("Existing SharePoint file GUID from sharepointIds.listItemUniqueId or the driveItem eTag. This is not the opaque driveItem ID. For new files use the files parameter instead.")]
     public required string Id { get; init; }
 
     [JsonPropertyName("contentUrl")]

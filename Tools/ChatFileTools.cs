@@ -13,18 +13,20 @@ namespace TeamsMcp.Tools;
 public sealed class ChatFileTools(ISender sender)
 {
     [McpServerTool(Name = "teams_send_chat_message_with_attachments"), Description(
-        "Send one message to an existing Teams chat with references to existing OneDrive/SharePoint files. Files must already be uploaded and shared with every intended recipient by a separate storage tool. " +
-        "This tool only posts the Teams message; it does not upload, download, modify, or share files or verify recipients' file permissions. Requires an approved execution plan. Never retry automatically after an unknown send outcome.")]
+        "Send one Teams message with files in a single call. Supply files to upload to the connected user's OneDrive and share with every chat member automatically, or attachments for already shared file references, or both (1-10 total). " +
+        "Requires an approved execution plan and Files.ReadWrite for uploads. Never retry automatically after a partial failure or unknown send outcome.")]
     public async Task<CallToolResult> SendChatMessageWithAttachments(
         [Description("Existing Teams chat ID, including a self-chat if appropriate.")] string chatId,
         [Description("Plain-text message accompanying the files; HTML is escaped.")] string message,
-        [Description("1-10 existing file references returned by the separate storage tool: id (SharePoint file GUID), contentUrl (HTTPS webDavUrl), and name (filename). File upload and recipient access must be completed before sending. Do not supply bytes, base64, Gateway artifact URLs, or local paths.")]
-        List<ChatFileReference> attachments,
+        [Description("Optional existing file references: id (SharePoint GUID), contentUrl (HTTPS webDavUrl), name. These files must already be shared with recipients. For new files use files instead.")]
+        List<ChatFileReference>? attachments = null,
+        [Description("Optional new files: name, contentType, and either agentFileUrl or base64Content. Gateway accepts ./artifacts/... as agentFileUrl for generated files. Files are uploaded and shared before sending.")]
+        List<ChatFileUpload>? files = null,
         CancellationToken cancellationToken = default)
     {
         try
         {
-            var result = await sender.Send(new SendChatFilesUsecase(chatId, message, attachments), cancellationToken);
+            var result = await sender.Send(new SendChatFilesUsecase(chatId, message, attachments ?? [], files), cancellationToken);
             return new CallToolResult { Content = [new TextContentBlock { Text = GraphClient.Print(result) }] };
         }
         catch (ChatFileDeliveryException exception)
@@ -34,7 +36,8 @@ public sealed class ChatFileTools(ISender sender)
                 error = exception.Message,
                 cause = exception.InnerException?.Message,
                 messageOutcome = exception.MessageOutcome,
-                attachments = exception.Attachments
+                attachments = exception.Attachments,
+                uploadedFiles = exception.UploadedFiles
             }, new JsonSerializerOptions(JsonSerializerDefaults.Web));
             return new CallToolResult { IsError = true, Content = [new TextContentBlock { Text = details }] };
         }

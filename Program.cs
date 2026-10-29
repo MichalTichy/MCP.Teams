@@ -11,6 +11,7 @@ using TeamsMcp.Configuration;
 using TeamsMcp.Services;
 using TeamsMcp.Tools;
 using TeamsMcp.ChatFiles.Usecases;
+using TeamsMcp.ChatFiles.Storage;
 
 var builder = WebApplication.CreateBuilder(args);
 var dataPath = builder.Configuration.GetSection(TeamsOptions.SectionName).GetValue<string>(nameof(TeamsOptions.DataPath))
@@ -24,6 +25,9 @@ builder.Services.AddOptions<TeamsOptions>()
 builder.Services.AddSingleton<GraphTokenProvider>();
 builder.Services.AddSingleton<IGraphTokenProvider>(provider => provider.GetRequiredService<GraphTokenProvider>());
 builder.Services.AddHttpClient<GraphClient>();
+builder.Services.AddHttpClient<ChatFileSourceReader>()
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+builder.Services.AddTransient<OneDriveChatFileStorage>();
 builder.Services.AddMediatR(configuration => configuration.RegisterServicesFromAssemblyContaining<SendChatFilesUsecase>());
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>

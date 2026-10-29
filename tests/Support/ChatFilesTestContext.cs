@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using TeamsMcp.ChatFiles.Models;
 using TeamsMcp.ChatFiles.Notifications;
 using TeamsMcp.ChatFiles.Usecases;
+using TeamsMcp.ChatFiles.Storage;
 using TeamsMcp.Configuration;
 using TeamsMcp.Services;
 using TeamsMcp.Tools;
@@ -13,17 +14,24 @@ namespace TeamsMcp.Tests.Support;
 public sealed class ChatFilesTestContext : IDisposable
 {
     public RecordingHttpHandler GraphHttp { get; } = new();
+    public RecordingHttpHandler FileHttp { get; } = new();
     public List<ChatFilesMessageSentNotification> Notifications { get; } = [];
     private readonly ServiceProvider _services;
     private readonly HttpClient _http;
+    private readonly HttpClient _fileHttp;
     public ChatFileTools Tool => new(_services.GetRequiredService<ISender>());
 
     public ChatFilesTestContext()
     {
         _http = new HttpClient(GraphHttp);
+        _fileHttp = new HttpClient(FileHttp);
         var services = new ServiceCollection();
+        var options = Options.Create(new TeamsOptions { GraphBaseUrl = "https://graph.example.com/v1.0", TenantId = "tenant-1" });
+        services.AddSingleton(options);
         services.AddSingleton(new GraphClient(_http, new TestGraphTokens(),
-            Options.Create(new TeamsOptions { GraphBaseUrl = "https://graph.example.com/v1.0" })));
+            options));
+        services.AddSingleton(new ChatFileSourceReader(_fileHttp, options));
+        services.AddTransient<OneDriveChatFileStorage>();
         services.AddMediatR(config => config.RegisterServicesFromAssemblyContaining<SendChatFilesUsecase>());
         services.AddSingleton<INotificationHandler<ChatFilesMessageSentNotification>>(new RecordingSentNotificationHandler(Notifications));
         _services = services.BuildServiceProvider();
@@ -44,5 +52,6 @@ public sealed class ChatFilesTestContext : IDisposable
     {
         _services.Dispose();
         _http.Dispose();
+        _fileHttp.Dispose();
     }
 }

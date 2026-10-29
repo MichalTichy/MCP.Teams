@@ -17,7 +17,7 @@ Create one app registration in the tenant that owns the Teams account.
 3. Add delegated Microsoft Graph permissions:
    `User.Read`, `Chat.ReadWrite`, `ChatMessage.Send`, `Team.ReadBasic.All`,
    `Channel.ReadBasic.All`, `ChannelMessage.Read.All`, `ChannelMessage.Send`,
-   `Calendars.ReadWrite`, and `OnlineMeetingTranscript.Read.All`.
+   `Calendars.ReadWrite`, `Files.ReadWrite`, and `OnlineMeetingTranscript.Read.All`.
 4. Add the `CallRecords.Read.All`, `OnlineMeetingTranscript.Read.All`, and
    `CallTranscripts.Read.All` **application** permissions and grant admin consent.
 5. Create a client secret if call history, transcript discovery, or ad-hoc call transcript intake is needed.
@@ -61,7 +61,7 @@ Meeting creation is a calendar operation with `isOnlineMeeting=true`; this produ
 ## Tool surface
 
 - Chats: list/get chats, list/get messages, list members, send plain-text messages
-  or messages with references to existing OneDrive/SharePoint files.
+  or messages with new file uploads and existing OneDrive/SharePoint references.
 - Channels: list teams/channels/messages, send a root message, reply in a thread.
 - Meetings: create, get, update, and cancel calendar-backed Teams meetings.
 - Calls: list/get call records, participants, and sessions.
@@ -76,57 +76,68 @@ Message edits/deletes and team membership administration are intentionally omitt
 
 `teams_send_chat_message_with_attachments` is a separate mutation tool; the existing
 `teams_send_chat_message` contract is unchanged. It accepts `chatId`, a plain-text
-`message`, and 1–10 references to existing Microsoft 365 files. It only posts a
-Teams message: it does not upload, download, modify, or share files. Upload and
-recipient permissions belong to a separate OneDrive/SharePoint tool.
+`message`, and 1–10 files in total using either or both optional arrays:
 
-For each attachment, pass the storage tool's verified metadata:
+- `files`: new files to upload, share, and send in this single call. Each has
+  `name`, optional `contentType`, and exactly one of `agentFileUrl` or
+  `base64Content`. The default download limit is 25 MiB per file, 50 MiB combined;
+  inline base64 is limited to 1 MiB decoded. Sources are read and validated before
+  making changes to OneDrive.
+- `attachments`: existing, already shared references with `id` (SharePoint GUID),
+  `contentUrl` (HTTPS `webDavUrl`), and `name`. This preserves the previous contract;
+  reference-only calls make no upload or sharing requests.
 
-- `id`: the SharePoint file GUID from `sharepointIds.listItemUniqueId` or the
-  GUID in the driveItem `eTag`. Do not use the opaque driveItem ID.
-- `contentUrl`: the file's HTTPS `webDavUrl`, selected explicitly when reading
-  driveItem metadata. This is a Microsoft 365 file reference, not a Gateway
-  artifact URL, Graph API download endpoint, base64 payload, or local path.
-- `name`: the display filename including its extension.
-
-For example:
+For example, to send a generated workbook through Codex Gateway:
 
 ```json
 {
   "chatId": "<verified existing chat ID>",
   "message": "Here are the working reports for review.",
-  "attachments": [
+  "files": [
     {
-      "id": "153fa47d-18c9-4179-be08-9879815a9f90",
-      "contentUrl": "https://tenant.sharepoint.com/personal/owner/Documents/Reports/report.xlsx",
-      "name": "report.xlsx"
+      "name": "report.xlsx",
+      "contentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "agentFileUrl": "./artifacts/report.xlsx"
     }
   ]
 }
 ```
 
-All intended recipients must already have access. The separate storage tool must
-verify that prerequisite; this Teams tool neither grants nor checks file access.
-Its only Microsoft Graph request is `POST /chats/{chatId}/messages`, with
-`contentType: reference` attachments. Text is HTML-escaped, references are validated
-before sending, and GUIDs must be unique within a message. It uses the existing
-delegated `ChatMessage.Send` permission and requires no file permissions or Gateway
-file-transfer configuration.
+Gateway snapshots `./artifacts/...` into a temporary URL before forwarding the
+authorized tool call. Direct MCP clients can supply an existing Gateway artifact
+URL or inline base64 instead. `TEAMS_MCP_GATEWAY_FILE_BASE_URL` must match the
+origin in Gateway's `McpGateway:RunnerBaseUrl` (Compose: `http://gateway:8080`).
+Only opaque `/_internal/mcp/artifacts/...` URLs on that exact origin are accepted;
+downloads have no Graph credentials and do not follow redirects.
 
-Failures before sending return `isError: true` without external changes. A send
-attempt that ends without a valid message receipt returns `isError: true`, the
-file references, and `messageOutcome: unknown`. Inspect the chat before retrying;
-the tool never automatically retries a mutation. A failure after receiving the
-message ID is reported as `messageOutcome: sent` so an already sent message is not
-duplicated. Successful sends publish a `ChatFilesMessageSentNotification`.
+The tool resolves the connected account and all chat members, including later
+pages. It uploads new files into the connected account's `Microsoft Teams Chat
+Files` folder, creating the folder when needed. Unique filenames preserve existing
+files. Every other chat member gets authenticated read access without invitation
+emails or public sharing links. A self-chat needs no additional sharing. Unsupported
+or unresolved member identities stop delivery. All sharing receipts must confirm
+the intended recipients before one message is posted with all file references.
+
+Failures return `isError: true`, prepared `attachments`, and `uploadedFiles` with
+their drive item IDs, names, available URLs, and confirmed-sharing status. Before
+the message request, `messageOutcome` is `notSent`; uploaded files may remain and
+are not automatically deleted. An upload with a lost receipt can also leave a
+file without a recorded item ID. A missing message receipt returns `unknown`;
+inspect the chat before retrying. A failure after receiving the message ID reports
+`sent`. Mutations are never automatically retried. Successful sends publish a
+`ChatFilesMessageSentNotification`. Existing-reference callers remain responsible
+for those files' recipient permissions.
 
 To enable the feature on an existing installation:
 
-1. Make a separate storage tool available to upload files, establish recipient
-   access, and return the reference metadata above. That capability is not
-   implemented by this Teams server.
-2. Build/redeploy the Teams MCP image. No new Graph scopes are required by this
-   change and the existing delegated scope set is unchanged.
+1. Add delegated `Files.ReadWrite` to the Entra registration and grant the required
+   consent. Deploy the updated Teams MCP image, then reconnect the same Microsoft
+   account through `/admin` so the new permission enters the token cache. Existing
+   custom `DelegatedScopes` settings must include `Files.ReadWrite` for uploads.
+2. Deploy the updated Gateway for `./artifacts/...` output-file forwarding and
+   HTTPS binary input attachments. Deploy its runner with Python/openpyxl and the
+   document extractor when those are not already available. Check the file-origin
+   setting above. A separate OneDrive MCP server is not needed.
 3. Rediscover this server's tools in Gateway and grant invocation of
    `teams_send_chat_message_with_attachments` only to the execution profile.
    Samwise planning can inspect it through the Execution catalogue/schema lookup;
@@ -143,8 +154,8 @@ dotnet build TeamsMcp.csproj --configuration Release
 dotnet test tests/TeamsMcp.Tests.csproj --configuration Release
 ```
 
-Tests use fake HTTP transports and token providers. They verify that existing
-file references produce exactly one Teams send and no storage/sharing operations,
-validate references and HTML escaping, handle uncertain sends, inspect the actual
-MCP schema, and preserve the existing text-only contract. They do not contact
-Microsoft Graph or send real messages.
+Tests use fake HTTP transports and token providers. They cover upload bytes,
+Gateway downloads, recipient resolution and pagination, sharing failures, self-chat,
+folder creation, source validation, partial delivery, existing file references,
+HTML escaping, the actual MCP schema, and the existing text-only contract. They do
+not contact Microsoft Graph or send real messages.

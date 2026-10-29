@@ -3,11 +3,13 @@ using System.Text.Json.Nodes;
 using MediatR;
 using TeamsMcp.ChatFiles.Models;
 using TeamsMcp.ChatFiles.Notifications;
+using TeamsMcp.ChatFiles.Storage;
 using TeamsMcp.Services;
 
 namespace TeamsMcp.ChatFiles.Usecases;
 
-public sealed class SendChatFilesUsecaseHandler(GraphClient graph, IPublisher publisher)
+public sealed class SendChatFilesUsecaseHandler(GraphClient graph, IPublisher publisher,
+    ChatFileSourceReader sourceReader, OneDriveChatFileStorage storage)
     : IRequestHandler<SendChatFilesUsecase, JsonNode?>
 {
     public async Task<JsonNode?> Handle(SendChatFilesUsecase request, CancellationToken cancellationToken)
@@ -15,8 +17,9 @@ public sealed class SendChatFilesUsecaseHandler(GraphClient graph, IPublisher pu
         var chatId = GraphClient.Id(request.ChatId);
         GraphClient.Require(request.Message, nameof(request.Message));
         ArgumentNullException.ThrowIfNull(request.Attachments);
-        if (request.Attachments.Count is < 1 or > 10)
-            throw new ArgumentException("Supply between 1 and 10 existing file references.");
+        var uploads = request.Files ?? [];
+        if (request.Attachments.Count + uploads.Count is < 1 or > 10)
+            throw new ArgumentException("Supply between 1 and 10 files or existing file references in total.");
 
         var ids = new HashSet<Guid>();
         var references = new List<ChatFileReference>();
@@ -35,13 +38,35 @@ public sealed class SendChatFilesUsecaseHandler(GraphClient graph, IPublisher pu
             references.Add(attachment with { Id = id.ToString() });
         }
 
-        var content = string.Join("<br>", request.Message.Replace("\r\n", "\n").Replace('\r', '\n')
-            .Split('\n').Select(HtmlEncoder.Default.Encode));
-        content += string.Concat(references.Select(file => $"<attachment id=\"{file.Id}\"></attachment>"));
-        var messageOutcome = "unknown";
+        foreach (var upload in uploads) sourceReader.Validate(upload);
+        var messageOutcome = "notSent";
+        var uploadedFiles = new List<UploadedChatFile>();
         try
         {
-            // Storage and sharing belong to a separate tool; this operation only posts a Teams message.
+            if (uploads.Count > 0)
+            {
+                // Read every source before making storage changes, so invalid later inputs cannot leave partial uploads.
+                var sources = new List<byte[]>();
+                long totalBytes = 0;
+                foreach (var upload in uploads)
+                {
+                    var bytes = await sourceReader.ReadAsync(upload, cancellationToken);
+                    totalBytes += bytes.LongLength;
+                    if (totalBytes > 50 * 1024 * 1024) throw new ArgumentException("Combined file contents must not exceed 50 MiB.");
+                    sources.Add(bytes);
+                }
+                var recipients = await storage.GetRecipientsAsync(request.ChatId, cancellationToken);
+                for (var index = 0; index < uploads.Count; index++)
+                {
+                    var reference = await storage.UploadAndShareAsync(uploads[index], sources[index], recipients, uploadedFiles, cancellationToken);
+                    if (!ids.Add(Guid.Parse(reference.Id))) throw new InvalidOperationException("OneDrive returned a duplicate attachment GUID.");
+                    references.Add(reference);
+                }
+            }
+            var content = string.Join("<br>", request.Message.Replace("\r\n", "\n").Replace('\r', '\n')
+                .Split('\n').Select(HtmlEncoder.Default.Encode));
+            content += string.Concat(references.Select(file => $"<attachment id=\"{file.Id}\"></attachment>"));
+            messageOutcome = "unknown";
             var sent = await graph.DelegatedAsync(HttpMethod.Post, $"chats/{chatId}/messages", new
             {
                 body = new { contentType = "html", content },
@@ -61,7 +86,7 @@ public sealed class SendChatFilesUsecaseHandler(GraphClient graph, IPublisher pu
         catch (Exception exception)
         {
             // A missing receipt or transport failure cannot establish whether Graph accepted the send.
-            throw new ChatFileDeliveryException(references.ToArray(), messageOutcome, exception);
+            throw new ChatFileDeliveryException(references.ToArray(), messageOutcome, exception, uploadedFiles.ToArray());
         }
     }
 }
