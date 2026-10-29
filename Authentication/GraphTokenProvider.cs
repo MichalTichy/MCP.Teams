@@ -7,7 +7,7 @@ namespace TeamsMcp.Authentication;
 public sealed record DeviceCodePrompt(string UserCode, string VerificationUrl, DateTimeOffset ExpiresAt, string Message);
 public sealed record ConnectionState(bool Connected, string? Username, DeviceCodePrompt? PendingPrompt, string? Error);
 
-public sealed class GraphTokenProvider
+public sealed class GraphTokenProvider : IGraphTokenProvider
 {
     private readonly TeamsOptions _options;
     private readonly IPublicClientApplication _publicClient;

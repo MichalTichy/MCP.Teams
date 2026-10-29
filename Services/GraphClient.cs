@@ -8,7 +8,7 @@ using TeamsMcp.Configuration;
 
 namespace TeamsMcp.Services;
 
-public sealed class GraphClient(HttpClient httpClient, GraphTokenProvider tokens, IOptions<TeamsOptions> options)
+public sealed class GraphClient(HttpClient httpClient, IGraphTokenProvider tokens, IOptions<TeamsOptions> options)
 {
     private readonly TeamsOptions _options = options.Value;
 

@@ -10,6 +10,7 @@ using TeamsMcp.Authentication;
 using TeamsMcp.Configuration;
 using TeamsMcp.Services;
 using TeamsMcp.Tools;
+using TeamsMcp.ChatFiles.Usecases;
 
 var builder = WebApplication.CreateBuilder(args);
 var dataPath = builder.Configuration.GetSection(TeamsOptions.SectionName).GetValue<string>(nameof(TeamsOptions.DataPath))
@@ -21,7 +22,9 @@ builder.Services.AddDataProtection()
 builder.Services.AddOptions<TeamsOptions>()
     .Bind(builder.Configuration.GetSection(TeamsOptions.SectionName));
 builder.Services.AddSingleton<GraphTokenProvider>();
+builder.Services.AddSingleton<IGraphTokenProvider>(provider => provider.GetRequiredService<GraphTokenProvider>());
 builder.Services.AddHttpClient<GraphClient>();
+builder.Services.AddMediatR(configuration => configuration.RegisterServicesFromAssemblyContaining<SendChatFilesUsecase>());
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
     {
@@ -36,6 +39,7 @@ builder.Services.AddAuthorization();
 builder.Services.AddMcpServer()
     .WithHttpTransport()
     .WithTools<ChatTools>()
+    .WithTools<ChatFileTools>()
     .WithTools<ChannelTools>()
     .WithTools<MeetingTools>()
     .WithTools<TranscriptTools>()
