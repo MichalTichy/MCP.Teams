@@ -20,6 +20,7 @@ public sealed class ChatFilesTestContext : IDisposable
     private readonly HttpClient _http;
     private readonly HttpClient _fileHttp;
     public ChatFileTools Tool => new(_services.GetRequiredService<ISender>());
+    public ChatTools Chats => new(_services.GetRequiredService<GraphClient>());
 
     public ChatFilesTestContext()
     {

@@ -4,6 +4,7 @@ using MediatR;
 using TeamsMcp.ChatFiles.Models;
 using TeamsMcp.ChatFiles.Notifications;
 using TeamsMcp.ChatFiles.Storage;
+using TeamsMcp.Chats.Models;
 using TeamsMcp.Services;
 
 namespace TeamsMcp.ChatFiles.Usecases;
@@ -14,7 +15,8 @@ public sealed class SendChatFilesUsecaseHandler(GraphClient graph, IPublisher pu
 {
     public async Task<JsonNode?> Handle(SendChatFilesUsecase request, CancellationToken cancellationToken)
     {
-        var chatId = GraphClient.Id(request.ChatId);
+        var targetChatId = ChatTarget.Resolve(request.ChatId);
+        var chatId = GraphClient.Id(targetChatId);
         GraphClient.Require(request.Message, nameof(request.Message));
         ArgumentNullException.ThrowIfNull(request.Attachments);
         var uploads = request.Files ?? [];
@@ -55,7 +57,7 @@ public sealed class SendChatFilesUsecaseHandler(GraphClient graph, IPublisher pu
                     if (totalBytes > 50 * 1024 * 1024) throw new ArgumentException("Combined file contents must not exceed 50 MiB.");
                     sources.Add(bytes);
                 }
-                var recipients = await storage.GetRecipientsAsync(request.ChatId, cancellationToken);
+                var recipients = await storage.GetRecipientsAsync(targetChatId, cancellationToken);
                 for (var index = 0; index < uploads.Count; index++)
                 {
                     var reference = await storage.UploadAndShareAsync(uploads[index], sources[index], recipients, uploadedFiles, cancellationToken);
@@ -80,7 +82,7 @@ public sealed class SendChatFilesUsecaseHandler(GraphClient graph, IPublisher pu
             }, cancellationToken);
             var messageId = GraphClient.Require(sent?["id"]?.GetValue<string>() ?? "", "Microsoft Graph message id");
             messageOutcome = "sent";
-            await publisher.Publish(new ChatFilesMessageSentNotification(request.ChatId, messageId, references.ToArray()), cancellationToken);
+            await publisher.Publish(new ChatFilesMessageSentNotification(targetChatId, messageId, references.ToArray()), cancellationToken);
             return sent;
         }
         catch (Exception exception)

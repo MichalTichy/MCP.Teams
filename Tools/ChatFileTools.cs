@@ -5,6 +5,7 @@ using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using TeamsMcp.ChatFiles.Models;
 using TeamsMcp.ChatFiles.Usecases;
+using TeamsMcp.Chats.Models;
 using TeamsMcp.Services;
 
 namespace TeamsMcp.Tools;
@@ -14,9 +15,10 @@ public sealed class ChatFileTools(ISender sender)
 {
     [McpServerTool(Name = "teams_send_chat_message_with_attachments"), Description(
         "Send one Teams message with files in a single call. Supply files to upload to the connected user's OneDrive and share with every chat member automatically, or attachments for already shared file references, or both (1-10 total). " +
+        "Use chatId 'self' (48:notes) to send files privately to the connected user; no chat link or sharing invitation is needed. " +
         "Requires an approved execution plan and Files.ReadWrite for uploads. Never retry automatically after a partial failure or unknown send outcome.")]
     public async Task<CallToolResult> SendChatMessageWithAttachments(
-        [Description("Existing Teams chat ID, including a self-chat if appropriate.")] string chatId,
+        [Description(ChatTarget.ParameterDescription)] string chatId,
         [Description("Plain-text message accompanying the files; HTML is escaped.")] string message,
         [Description("Optional existing file references: id (SharePoint GUID), contentUrl (HTTPS webDavUrl), name. These files must already be shared with recipients. For new files use files instead.")]
         List<ChatFileReference>? attachments = null,

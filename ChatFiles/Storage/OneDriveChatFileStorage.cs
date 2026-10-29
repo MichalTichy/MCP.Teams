@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
 using TeamsMcp.ChatFiles.Models;
+using TeamsMcp.Chats.Models;
 using TeamsMcp.Configuration;
 using TeamsMcp.Services;
 
@@ -16,6 +17,9 @@ public sealed class OneDriveChatFileStorage(GraphClient graph, IOptions<TeamsOpt
     {
         var me = await graph.DelegatedAsync(HttpMethod.Get, "me?$select=id", cancellationToken: cancellationToken);
         var ownerId = GraphClient.Require(me?["id"]?.GetValue<string>() ?? "", "Connected user ID");
+        // The fixed self target belongs to the delegated account. Graph's regular
+        // chat membership endpoint is not required or reliably available for it.
+        if (ChatTarget.IsSelf(chatId)) return [];
         var recipients = new Dictionary<string, JsonObject>(StringComparer.OrdinalIgnoreCase);
         var ownerIsMember = false;
         string? path = $"chats/{GraphClient.Id(chatId)}/members";

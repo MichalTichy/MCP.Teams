@@ -59,6 +59,39 @@ public sealed class ChatFileUploadTests
         Assert.Single(context.GraphHttp.Requests, request => request.Path.EndsWith("/messages"));
     }
 
+    [Theory]
+    [InlineData("self")]
+    [InlineData("48:notes")]
+    public async Task Native_self_chat_upload_does_not_require_membership_lookup_or_file_sharing(string target)
+    {
+        using var context = CreateContext();
+        var normal = context.GraphHttp.Respond!;
+        context.GraphHttp.Respond = request => request.Path.EndsWith("/members") || request.Path.EndsWith("/invite")
+            ? throw new InvalidOperationException("Self-chat has no ordinary membership endpoint or other recipients.")
+            : normal(request);
+
+        var result = await context.Tool.SendChatMessageWithAttachments(target, "Private report", files: [Inline()]);
+
+        Assert.NotEqual(true, result.IsError);
+        Assert.DoesNotContain(context.GraphHttp.Requests, request => request.Path.EndsWith("/members") || request.Path.EndsWith("/invite"));
+        var sent = Assert.Single(context.GraphHttp.Requests, request => request.Path.EndsWith("/messages"));
+        Assert.Equal("/v1.0/chats/48:notes/messages", Uri.UnescapeDataString(sent.Path));
+        Assert.Equal("48:notes", Assert.Single(context.Notifications).ChatId);
+    }
+
+    [Fact]
+    public async Task Self_chat_upload_stops_before_storage_changes_when_connected_identity_is_missing()
+    {
+        using var context = CreateContext();
+        context.GraphHttp.Respond = _ => RecordingHttpHandler.Json(new { });
+
+        var result = await context.Tool.SendChatMessageWithAttachments("self", "Private report", files: [Inline()]);
+
+        Assert.True(result.IsError);
+        Assert.Equal(HttpMethod.Get, Assert.Single(context.GraphHttp.Requests).Method);
+        Assert.Empty(context.Notifications);
+    }
+
     [Fact]
     public async Task Later_membership_page_is_included_before_sharing()
     {

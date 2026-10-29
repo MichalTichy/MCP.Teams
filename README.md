@@ -74,6 +74,15 @@ Message edits/deletes and team membership administration are intentionally omitt
 
 ## Chat file attachments
 
+To deliver a message or files privately to the connected account, pass `chatId: "self"`
+to the existing chat tools. This resolves to Teams' `48:notes` self-chat. No chat URL,
+participant search, or chat creation is needed, even when it is absent from the recent
+chat list. `teams_list_chats` also returns this target in `selfChat`; `teams_get_chat`
+and `teams_list_chat_members` resolve it from the connected profile instead of relying
+on Graph's ordinary self-chat metadata or membership endpoints. File uploads stay in
+the connected account's OneDrive with no sharing invitations. Other chats continue to
+require verified membership and sharing with every recipient.
+
 `teams_send_chat_message_with_attachments` is a separate mutation tool; the existing
 `teams_send_chat_message` contract is unchanged. It accepts `chatId`, a plain-text
 `message`, and 1–10 files in total using either or both optional arrays:
